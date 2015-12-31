@@ -1,3 +1,5 @@
+import ast
+
 from collections import namedtuple
 
 
@@ -13,7 +15,11 @@ class EList(Expr): pass
 
 def parse(txt):
     stack = []
-    scope = __builtins__.__dict__
+
+    scope = {
+        k: {'is_callable': True}
+        for k, v in __builtins__.__dict__.items()
+    }
 
     buf = None
 
@@ -48,7 +54,7 @@ def parse(txt):
                 if buf is not None:
                     push_stack(stack, buf)
                     buf = None
-                run_stack(stack, scope)
+                yield from run_stack(stack, scope)
             else:
                 buf = (buft, bufv + c)
 
@@ -68,7 +74,7 @@ def parse(txt):
     if buf is not None:
         push_stack(stack, buf)
 
-    run_stack(stack, scope)
+    yield from run_stack(stack, scope)
 
 
 def push_stack(stack, item):
@@ -98,15 +104,17 @@ def run_stack(stack, scope):
                 name = stack.pop()
                 value = stack.pop()
 
-                if name.v in scope and callable(scope[name.v]):
-                    scope[name.v](resolve_value(value, scope))
+                if name.v in scope and scope[name.v]['is_callable']:
+                    yield from gen_call(name, value, scope)
                 else:
-                    scope[name.v] = resolve_value(value, scope)
+                    yield from gen_set(name, value, scope)
 
             elif op == 'def':
                 name = stack.pop()
                 block = stack.pop()
                 args = stack.pop()
+
+                yield from gen_def(name, args, block, scope)
 
     while True:
         try:
@@ -124,9 +132,45 @@ def match_stack(stack, parts):
 
 def resolve_value(value, scope):
     if isinstance(value, EId):
-        return scope.get(value.v)
-    else:
-        return value.v
+        return ast.Name(id=value.v, ctx=ast.Load())
+    elif isinstance(value, (EInt,)):
+        return ast.Num(n=value.v)
 
 
-parse('(a,) [ 1 print ] a.')
+def gen_expr(**kwargs):
+    node = ast.Expr(**kwargs)
+    node = ast.fix_missing_locations(node)
+    return node
+
+
+def gen_call(name, value, scope):
+    yield gen_expr(value=ast.Call(func=ast.Name(id=name.v, ctx=ast.Load()),
+                   args=[resolve_value(value, scope)],
+                   keywords=[]))
+
+
+def gen_set(name, value, scope):
+    yield gen_expr(targets=[
+        ast.Name(id=name.v, ctx=ast.Store())
+    ], value=resolve_value(value, scope))
+
+
+def gen_def(name, args, body, scope):
+    scope[name.v] = {'is_callable': True}
+    args = [ast.arg(arg=a, annotation=None) for a in args.v]
+    yield ast.fix_missing_locations(ast.FunctionDef(
+        name=name.v,
+        args=ast.arguments(
+            args=args, kwonlyargs=[], kw_defaults=[], defaults=[]),
+        body=list(parse(body.v)),
+        decorator_list=[]))
+
+
+def run(txt):
+    body = list(parse(txt))
+    wrapper = ast.Module(body=body)
+    co = compile(wrapper, '<ast>', 'exec')
+    exec(co, {})
+
+
+run('(a,) [ a print ] foo. 2 foo')
