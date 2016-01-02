@@ -1,7 +1,13 @@
 import ast
 import astor
+import operator
+import itertools
+import string
 
 from collections import namedtuple
+
+
+IDCHARS = string.ascii_letters + string.digits + '_-'
 
 
 Expr = namedtuple('Expr', ['t', 'v'])
@@ -12,16 +18,25 @@ class EBlock(Expr): pass
 class EInt(Expr): pass
 class EStr(Expr): pass
 class EList(Expr): pass
+class EOp(Expr): pass
 
 
 def parse(txt):
     stack = []
 
+    eat((c for c in txt), stack)
+
+    print(stack)
+
+    return
+    stack = []
+
     scope = {
-        k: {'is_callable': True}
+        k: {'is_callable': True, 'fn': v}
         for k, v in __builtins__.__dict__.items()
     }
 
+    scope['+'] = {'is_callable': True, 'fn': operator.add}
     scope['__'] = []
 
     buf = None
@@ -90,6 +105,71 @@ def parse(txt):
     yield from run_stack(stack, scope)
 
 
+def eat(rest, stack):
+    expr, rest = eat_next(rest, stack)
+
+    if expr:
+        stack.append(expr)
+        eat(rest, stack)
+
+
+def eat_next(rest, stack):
+    c = next(rest)
+
+    if c in (' ', '\n', '\r'):
+        return eat_next(rest, stack)
+
+    elif c.isdigit():
+        buf = [c]
+        while True:
+            c = next(rest)
+            if not c.isdigit():
+                break
+            buf.append(c)
+        buf2 = [c]
+        if c == 'e':
+            l = c = next(rest)
+            if c == '+':
+                buf2.append(c)
+            if c.isdigit():
+                buf2.append(c)
+            elif l == '+':
+                rest = reject(rest, buf2)
+                buf2 = []
+            if buf2:
+                while True:
+                    c = next(rest)
+                    if not c.isdigit():
+                        break
+                    buf2.append(c)
+                buf.extend(buf2)
+        expr = EInt(int, int(''.join(buf)))
+        return expr, rest
+
+    elif c == '+':
+        expr, rest = eat_next(rest, stack)
+        if expr:
+            expr = EOp(c, [stack.pop(), expr])
+            return expr, rest
+
+    elif c.isalpha() or c == '_':
+        buf = [c]
+        while True:
+            c = next(rest)
+            if c not in IDCHARS:
+                rest = reject(rest, [c])
+                break
+            buf.append(c)
+        expr = EId(None, ''.join(buf))
+        return expr, rest
+
+    return None, rest
+
+
+def reject(rest, items):
+    return itertools.chain(items, rest)
+
+
 def get_item(item):
     (buft, bufv) = item
 
@@ -118,6 +198,7 @@ def run_stack(stack, scope):
 
     for op, p in constructs:
         if match_stack(stack, p):
+            print(stack)
             if op == 'set':
                 name = stack.pop()
 
@@ -229,10 +310,6 @@ def run(txt):
 
 run('''
 
-(a,b) [ a print ] add.
-
-1,2, add result.
-
-result print.
+1 + 2 print.
 
 ''')
