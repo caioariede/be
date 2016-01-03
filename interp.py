@@ -19,105 +19,88 @@ class EInt(Expr): pass
 class EStr(Expr): pass
 class EList(Expr): pass
 class EOp(Expr): pass
+class ECompare(Expr): pass
 
 
 def parse(txt):
     stack = []
 
-    eat((c for c in txt), stack)
-
-    print(stack)
-
-    return
-    stack = []
-
     scope = {
-        k: {'is_callable': True, 'fn': v}
-        for k, v in __builtins__.__dict__.items()
+        'callables': __builtins__.__dict__,
+        'stack': [],
     }
 
-    scope['+'] = {'is_callable': True, 'fn': operator.add}
-    scope['__'] = []
-
-    buf = None
-
-    for c in txt:
-        if buf is not None:
-            buft, bufv = buf
-
-            if buft == 'block':
-                if c == ']':
-                    push_stack(stack, buf)
-                    buf = None
-                else:
-                    buf = (buft, bufv + c)
-            elif c == ',' and buft not in (list,):
-                push_stack(stack, buf)
-                push_stack(stack, (None, c))
-                yield from run_stack(stack, scope)
-                buf = None
-            elif c == ' ':
-                push_stack(stack, buf)
-                buf = None
-            elif buft == list:
-                if c == ')':
-                    push_stack(stack, buf)
-                    buf = None
-                elif c == ',':
-                    pass
-                else:
-                    bufv.append(c)
-                    buf = (buft, bufv)
-            elif buft == str and c == '"':
-                push_stack(stack, buf)
-                buf = None
-            elif buft == int and c == '.':
-                buf = (float, bufv + c)
-            elif c == '.':
-                if buf is not None:
-                    push_stack(stack, buf)
-                    buf = None
-                yield from run_stack(stack, scope)
-            else:
-                buf = (buft, bufv + c)
-
-        elif c == ',':
-            push_stack(stack, (None, c))
-            yield from run_stack(stack, scope)
-        elif c == '.':
-            yield from run_stack(stack, scope)
-        elif c in (' ', '\r', '\n'):
-            pass
-        elif c == '"':
-            buf = (str, "")
-        elif c.isdigit():
-            buf = (int, c)
-        elif c == '(':
-            buf = (list, [])
-        elif c == '[':
-            buf = ('block', "")
-        else:
-            buf = (None, c)
-
-    if buf is not None:
-        push_stack(stack, buf)
-
-    yield from run_stack(stack, scope)
+    yield from eat((c for c in txt), stack, scope)
 
 
-def eat(rest, stack):
+def eat(rest, stack, scope):
     expr, rest = eat_next(rest, stack)
 
     if expr:
-        stack.append(expr)
-        eat(rest, stack)
+        if expr == '.':
+            yield from run_stack(stack, scope)
+
+        elif expr == ',':
+            buf = list(run_stack(stack, scope, noexpr=True))
+            scope['stack'].extend(buf)
+
+        else:
+            stack.append(expr)
+
+        if expr == ',':
+            yield from run_stack(stack, scope)
+
+        yield from eat(rest, stack, scope)
+
+        if stack:
+            yield from run_stack(stack, scope)
 
 
 def eat_next(rest, stack):
-    c = next(rest)
+    try:
+        c = next(rest)
+    except StopIteration:
+        return None, stack
 
     if c in (' ', '\n', '\r'):
         return eat_next(rest, stack)
+
+    elif c == '[':
+        buf = []
+        openb = 1
+        while True:
+            try:
+                c = next(rest)
+            except StopIteration:
+                return None, stack
+
+            if c == ']':
+                openb -= 1
+                if openb < 1:
+                    break
+            elif c == '[':
+                openb += 1
+            buf.append(c)
+        return EBlock(None, buf), rest
+
+    elif c == '(':
+        is_list = False
+        while True:
+            expr, rest = eat_next(rest, stack)
+            if expr == ')':
+                if is_list:
+                    items = []
+                    while True:
+                        try:
+                            items.append(stack.pop(0))
+                        except:
+                            break
+                    return EList(list, items), rest
+                return stack.pop(), rest
+            elif expr == ',':
+                is_list = True
+            else:
+                stack.append(expr)
 
     elif c.isdigit():
         buf = [c]
@@ -143,13 +126,21 @@ def eat_next(rest, stack):
                         break
                     buf2.append(c)
                 buf.extend(buf2)
+        else:
+            rest = reject(rest, buf2)
         expr = EInt(int, int(''.join(buf)))
         return expr, rest
 
-    elif c == '+':
+    elif c in ('+', '-', '*'):
         expr, rest = eat_next(rest, stack)
         if expr:
             expr = EOp(c, [stack.pop(), expr])
+            return expr, rest
+
+    elif c in ('<', '>'):
+        expr, rest = eat_next(rest, stack)
+        if expr:
+            expr = ECompare(c, [stack.pop(), expr])
             return expr, rest
 
     elif c.isalpha() or c == '_':
@@ -163,7 +154,7 @@ def eat_next(rest, stack):
         expr = EId(None, ''.join(buf))
         return expr, rest
 
-    return None, rest
+    return c, rest
 
 
 def reject(rest, items):
@@ -189,17 +180,23 @@ def push_stack(stack, item):
     stack.append(get_item(item))
 
 
-def run_stack(stack, scope):
+def run_stack(stack, scope, noexpr=False):
+    print(stack)
+    print()
     constructs = [
         ('def', [EList, EBlock, EId]),
         ('set', [EId]),
         ('set', [Expr, EId]),
+        ('if', [Expr, EBlock, EBlock]),
+        ('expr', [Expr]),
     ]
 
     for op, p in constructs:
         if match_stack(stack, p):
-            print(stack)
-            if op == 'set':
+            if op == 'expr':
+                yield resolve_value(stack.pop(), scope)
+
+            elif op == 'set':
                 name = stack.pop()
 
                 if stack:
@@ -207,20 +204,31 @@ def run_stack(stack, scope):
                 else:
                     value = None
 
-                if name.v in scope and scope[name.v]['is_callable']:
+                # 1,2,min result
+                if isinstance(value, EId) and scope['stack']:
+                    call = list(emit_call(value, [], scope, noexpr=True))[0]
+                    yield from emit_set(name, call, scope)
+
+                # 1 print
+                elif name.v in scope['callables']:
                     args = []
                     if value:
                         args.append(value)
-                    yield from emit_call(name, args, scope)
-                elif name.v == ',':
-                    scope['__'].append(value)
-                elif isinstance(value, EId) and value.v in scope and scope[value.v]['is_callable'] and scope['__']:
-                    call = list(emit_call(value, [], scope))[0].value
-                    yield from emit_set(name, call, scope)
-                else:
-                    scope[name.v] = scope.get(value.v) or {'is_callable': True}
+                    yield from emit_call(name, args, scope, noexpr=noexpr)
+
+                # echo print
+                elif isinstance(value, EId):
+                    if value.v in scope['callables']:
+                        scope['callables'][name.v] = scope['callables'][value.v]
                     value = resolve_value(value, scope)
                     yield from emit_set(name, value, scope)
+
+                elif value:
+                    value = resolve_value(value, scope)
+                    yield from emit_set(name, value, scope)
+
+                else:
+                    yield resolve_value(name, scope)
 
             elif op == 'def':
                 name = stack.pop()
@@ -228,6 +236,15 @@ def run_stack(stack, scope):
                 args = stack.pop()
 
                 yield from emit_def(name, args, block, scope)
+
+            elif op == 'if':
+                elseb = stack.pop()
+                ifb = stack.pop()
+                cond = stack.pop()
+
+                yield from emit_if(cond, ifb, elseb, scope)
+
+            break
 
     while True:
         try:
@@ -242,16 +259,43 @@ def match_stack(stack, parts):
             p = parts[i]
         except IndexError:
             break
-        if isinstance(item, p):
-            return len(stack) == len(parts)
+        if not isinstance(item, p):
+            break
+        return len(stack) == len(parts)
     return False
 
 
 def resolve_value(value, scope):
     if isinstance(value, EId):
         return ast.Name(id=value.v, ctx=ast.Load())
-    elif isinstance(value, (EInt,)):
+    elif isinstance(value, EInt):
         return ast.Num(n=value.v)
+    elif isinstance(value, EList):
+        lst = [resolve_value(a, scope) for a in value.v]
+        return ast.List(elts=lst, ctx=ast.Load())
+    elif isinstance(value, EOp):
+        lft, rgt = value.v
+        lft = resolve_value(lft, scope)
+        rgt = resolve_value(rgt, scope)
+
+        operators = {
+            '+': ast.Add(),
+            '-': ast.Sub(),
+            '*': ast.Mult(),
+        }
+
+        return ast.BinOp(left=lft, right=rgt, op=operators[value.t])
+    elif isinstance(value, ECompare):
+        lft, rgt = value.v
+        lft = resolve_value(lft, scope)
+        rgt = resolve_value(rgt, scope)
+
+        operators = {
+            '<': ast.Lt(),
+            '>': ast.Gt(),
+        }
+
+        return ast.Compare(left=lft, ops=[operators[value.t]], comparators=[rgt])
 
 
 def expr(**kwargs):
@@ -262,18 +306,25 @@ def expr(**kwargs):
 
 # id
 # expr id
-def emit_call(name, args, scope):
-    args2 = scope['__']
-    args2.extend(args)
-    args2 = [resolve_value(a, scope) for a in args2]
+def emit_call(name, args, scope, noexpr=False):
+    if not args:
+        args2 = scope.pop('stack')
+        scope['stack'] = []
+    else:
+        args2 = []
 
-    yield expr(value=ast.Call(func=ast.Name(id=name.v, ctx=ast.Load()),
-               args=args2,
-               kwargs=[],
-               starargs=[],
-               keywords=[]))
+    args2.extend(resolve_value(a, scope) for a in args)
 
-    scope['__'] = []
+    call = ast.Call(func=ast.Name(id=name.v, ctx=ast.Load()),
+                    args=args2,
+                    kwargs=[],
+                    starargs=[],
+                    keywords=[])
+
+    if not noexpr:
+        call = expr(value=call)
+
+    yield call
 
 
 # id
@@ -286,19 +337,61 @@ def emit_set(name, value, scope):
 
 # list body id
 def emit_def(name, args, body, scope):
-    scope[name.v] = {'is_callable': True}
-    args = [ast.arg(arg=a, annotation=None) for a in args.v]
+    scope['callables'][name.v] = None
+    args = [ast.arg(arg=a.v, annotation=None) for a in args.v]
     args = ast.arguments(args=args, vararg=None, kwonlyargs=[], kw_defaults=[],
                          kwarg=None, defaults=[])
+
+    body = list(eat((c for c in body.v), [], scope))
+
+    if isinstance(body[-1], ast.If):
+        body.append(ast.Return(value=ast.Name(id=',', ctx=ast.Load())))
+
+    else:
+        lastv = body.pop()
+
+        if isinstance(lastv, ast.Expr):
+            lastv = lastv.value
+
+        body.append(ast.Return(value=lastv))
+
     yield ast.fix_missing_locations(ast.FunctionDef(
         name=name.v,
         args=args,
-        body=list(parse(body.v)),
+        body=body,
         decorator_list=[]))
+
+
+def emit_if(cond, ifb, elseb, scope):
+    cond = resolve_value(cond, scope)
+
+    ifb = list(eat(iter(ifb.v), [], scope))
+    elseb = list(eat(iter(elseb.v), [], scope))
+
+    lastv = ifb.pop()
+    if isinstance(lastv, ast.Expr):
+        lastv = lastv.value
+    if isinstance(lastv, ast.Assign):
+        lastv.targets.append(ast.Name(id=',', ctx=ast.Store()))
+        ifb.append(lastv)
+    else:
+        ifb.extend(emit_set(EId(None, ','), lastv, scope))
+
+    lastv = elseb.pop()
+    if isinstance(lastv, ast.Expr):
+        lastv = lastv.value
+    if isinstance(lastv, ast.Assign):
+        lastv.targets.append(ast.Name(id=',', ctx=ast.Store()))
+        elseb.append(lastv)
+    else:
+        elseb.extend(emit_set(EId(None, ','), lastv, scope))
+
+    yield ast.fix_missing_locations(ast.If(cond, ifb, elseb))
 
 
 def run(txt):
     body = list(parse(txt))
+
     wrapper = ast.Module(body=body)
 
     print(astor.dump(wrapper))
@@ -310,6 +403,13 @@ def run(txt):
 
 run('''
 
-1 + 2 print.
+(a,b) [ a + b ] add.
+
+(n,) [
+    n < 2 [ n ]
+          [ n - 1 fib, n - 2 fib, add ]
+] fib.
+
+7 fib, print.
 
 ''')
