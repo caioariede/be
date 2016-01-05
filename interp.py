@@ -131,7 +131,7 @@ def eat_next(rest, stack):
         expr = EInt(int, int(''.join(buf)))
         return expr, rest
 
-    elif c in ('+', '-', '*'):
+    elif c in ('+', '-', '*', '%'):
         expr, rest = eat_next(rest, stack)
         if expr:
             expr = EOp(c, [stack.pop(), expr])
@@ -142,6 +142,14 @@ def eat_next(rest, stack):
         if expr:
             expr = ECompare(c, [stack.pop(), expr])
             return expr, rest
+
+    elif c == '=':
+        c2 = next(rest)
+        if c2 == '=':
+            expr, rest = eat_next(rest, stack)
+            return ECompare('==', [stack.pop(), expr]), rest
+        rest = reject(rest, [c2])
+        return None, rest
 
     elif c.isalpha() or c == '_':
         buf = [c]
@@ -181,8 +189,6 @@ def push_stack(stack, item):
 
 
 def run_stack(stack, scope, noexpr=False):
-    print(stack)
-    print()
     constructs = [
         ('def', [EList, EBlock, EId]),
         ('set', [EId]),
@@ -194,7 +200,7 @@ def run_stack(stack, scope, noexpr=False):
     for op, p in constructs:
         if match_stack(stack, p):
             if op == 'expr':
-                yield resolve_value(stack.pop(), scope)
+                yield expr(value=resolve_value(stack.pop(), scope))
 
             elif op == 'set':
                 name = stack.pop()
@@ -267,12 +273,12 @@ def match_stack(stack, parts):
 
 def resolve_value(value, scope):
     if isinstance(value, EId):
-        return ast.Name(id=value.v, ctx=ast.Load())
+        node = ast.Name(id=value.v, ctx=ast.Load())
     elif isinstance(value, EInt):
-        return ast.Num(n=value.v)
+        node = ast.Num(n=value.v)
     elif isinstance(value, EList):
         lst = [resolve_value(a, scope) for a in value.v]
-        return ast.List(elts=lst, ctx=ast.Load())
+        node = ast.List(elts=lst, ctx=ast.Load())
     elif isinstance(value, EOp):
         lft, rgt = value.v
         lft = resolve_value(lft, scope)
@@ -282,9 +288,10 @@ def resolve_value(value, scope):
             '+': ast.Add(),
             '-': ast.Sub(),
             '*': ast.Mult(),
+            '%': ast.Mod(),
         }
 
-        return ast.BinOp(left=lft, right=rgt, op=operators[value.t])
+        node = ast.BinOp(left=lft, right=rgt, op=operators[value.t])
     elif isinstance(value, ECompare):
         lft, rgt = value.v
         lft = resolve_value(lft, scope)
@@ -293,9 +300,13 @@ def resolve_value(value, scope):
         operators = {
             '<': ast.Lt(),
             '>': ast.Gt(),
+            '==': ast.Eq(),
         }
 
-        return ast.Compare(left=lft, ops=[operators[value.t]], comparators=[rgt])
+        node = ast.Compare(left=lft, ops=[operators[value.t]],
+                           comparators=[rgt])
+
+    return ast.fix_missing_locations(node)
 
 
 def expr(**kwargs):
@@ -307,18 +318,24 @@ def expr(**kwargs):
 # id
 # expr id
 def emit_call(name, args, scope, noexpr=False):
+    args2 = []
+
     if not args:
-        args2 = scope.pop('stack')
+        stack = scope.pop('stack')
+
+        for node in stack:
+            if isinstance(node, ast.Expr):
+                node = node.value
+            args2.append(node)
+
         scope['stack'] = []
-    else:
-        args2 = []
 
     args2.extend(resolve_value(a, scope) for a in args)
 
     call = ast.Call(func=ast.Name(id=name.v, ctx=ast.Load()),
                     args=args2,
-                    kwargs=[],
-                    starargs=[],
+                    kwargs=None,
+                    starargs=None,
                     keywords=[])
 
     if not noexpr:
@@ -374,6 +391,8 @@ def emit_if(cond, ifb, elseb, scope):
     if isinstance(lastv, ast.Assign):
         lastv.targets.append(ast.Name(id=',', ctx=ast.Store()))
         ifb.append(lastv)
+    elif isinstance(lastv, ast.If):
+        ifb.append(lastv)
     else:
         ifb.extend(emit_set(EId(None, ','), lastv, scope))
 
@@ -382,6 +401,8 @@ def emit_if(cond, ifb, elseb, scope):
         lastv = lastv.value
     if isinstance(lastv, ast.Assign):
         lastv.targets.append(ast.Name(id=',', ctx=ast.Store()))
+        elseb.append(lastv)
+    elif isinstance(lastv, ast.If):
         elseb.append(lastv)
     else:
         elseb.extend(emit_set(EId(None, ','), lastv, scope))
@@ -403,13 +424,14 @@ def run(txt):
 
 run('''
 
-(a,b) [ a + b ] add.
+(n,s) [
+    n - 1 n.
+    n % 3 == 0 [ s + n s ] [
+        n % 5 == 0 [ s + n s ] [ s ]
+    ].
+    n < 1 [ s ] [ n, s, solve ].
+] solve.
 
-(n,) [
-    n < 2 [ n ]
-          [ n - 1 fib, n - 2 fib, add ]
-] fib.
-
-7 fib, print.
+10, 0, solve, print.
 
 ''')
