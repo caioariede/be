@@ -22,13 +22,8 @@ class EOp(Expr): pass
 class ECompare(Expr): pass
 
 
-def parse(txt):
+def parse(txt, scope):
     stack = []
-
-    scope = {
-        'callables': __builtins__.__dict__,
-        'stack': [],
-    }
 
     yield from eat((c for c in txt), stack, scope)
 
@@ -160,6 +155,12 @@ def eat_next(rest, stack):
                 break
             buf.append(c)
         expr = EId(None, ''.join(buf))
+        expr.is_safe = False
+        c = next(rest)
+        if c == '\'':
+            expr.is_safe = True
+        else:
+            rest = reject(rest, [c])
         return expr, rest
 
     return c, rest
@@ -216,7 +217,7 @@ def run_stack(stack, scope, noexpr=False):
                     yield from emit_set(name, call, scope)
 
                 # 1 print
-                elif name.v in scope['callables']:
+                elif not name.is_safe and name.v in scope['callables']:
                     args = []
                     if value:
                         args.append(value)
@@ -410,8 +411,20 @@ def emit_if(cond, ifb, elseb, scope):
     yield ast.fix_missing_locations(ast.If(cond, ifb, elseb))
 
 
+def inject_tail(scope):
+    scope['callables']['tail'] = None
+    return astor.parsefile('tail.py').body
+
+
 def run(txt):
-    body = list(parse(txt))
+    scope = {
+        'callables': __builtins__.__dict__,
+        'stack': [],
+    }
+
+    body = []
+    body.extend(inject_tail(scope))
+    body.extend(parse(txt, scope))
 
     wrapper = ast.Module(body=body)
 
@@ -429,9 +442,9 @@ run('''
     n % 3 == 0 [ s + n s ] [
         n % 5 == 0 [ s + n s ] [ s ]
     ].
-    n < 1 [ s ] [ n, s, solve ].
+    n < 1 [ s ] [ solve', n, s, tail ].
 ] solve.
 
-10, 0, solve, print.
+1000, 0, solve, print.
 
 ''')
