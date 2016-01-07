@@ -91,6 +91,8 @@ def eat_next(rest, stack):
                         except:
                             break
                     return EList(list, items), rest
+                if not stack:
+                    return EList(list, []), rest
                 return stack.pop(), rest
             elif expr == ',':
                 is_list = True
@@ -101,9 +103,12 @@ def eat_next(rest, stack):
         buf = [c]
         while True:
             c = next(rest)
-            if not c.isdigit():
+            if c.isdigit():
+                buf.append(c)
+            elif c == '_':
+                pass
+            else:
                 break
-            buf.append(c)
         buf2 = [c]
         if c == 'e':
             l = c = next(rest)
@@ -133,6 +138,11 @@ def eat_next(rest, stack):
             return expr, rest
 
     elif c in ('<', '>'):
+        n = next(rest)
+        if n == '=':
+            c += n
+        else:
+            rest = reject(rest, [n])
         expr, rest = eat_next(rest, stack)
         if expr:
             expr = ECompare(c, [stack.pop(), expr])
@@ -301,6 +311,8 @@ def resolve_value(value, scope):
         operators = {
             '<': ast.Lt(),
             '>': ast.Gt(),
+            '<=': ast.LtE(),
+            '>=': ast.GtE(),
             '==': ast.Eq(),
         }
 
@@ -383,30 +395,35 @@ def emit_def(name, args, body, scope):
 def emit_if(cond, ifb, elseb, scope):
     cond = resolve_value(cond, scope)
 
-    ifb = list(eat(iter(ifb.v), [], scope))
-    elseb = list(eat(iter(elseb.v), [], scope))
-
-    lastv = ifb.pop()
-    if isinstance(lastv, ast.Expr):
-        lastv = lastv.value
-    if isinstance(lastv, ast.Assign):
-        lastv.targets.append(ast.Name(id=',', ctx=ast.Store()))
-        ifb.append(lastv)
-    elif isinstance(lastv, ast.If):
-        ifb.append(lastv)
+    if ifb.v:
+        ifb = list(eat(iter(ifb.v), [], scope))
+        lastv = ifb.pop()
+        if isinstance(lastv, ast.Expr):
+            lastv = lastv.value
+        if isinstance(lastv, ast.Assign):
+            lastv.targets.append(ast.Name(id=',', ctx=ast.Store()))
+            ifb.append(lastv)
+        elif isinstance(lastv, ast.If):
+            ifb.append(lastv)
+        else:
+            ifb.extend(emit_set(EId(None, ','), lastv, scope))
     else:
-        ifb.extend(emit_set(EId(None, ','), lastv, scope))
+        ifb = [ast.Pass()]
 
-    lastv = elseb.pop()
-    if isinstance(lastv, ast.Expr):
-        lastv = lastv.value
-    if isinstance(lastv, ast.Assign):
-        lastv.targets.append(ast.Name(id=',', ctx=ast.Store()))
-        elseb.append(lastv)
-    elif isinstance(lastv, ast.If):
-        elseb.append(lastv)
+    if elseb.v:
+        elseb = list(eat(iter(elseb.v), [], scope))
+        lastv = elseb.pop()
+        if isinstance(lastv, ast.Expr):
+            lastv = lastv.value
+        if isinstance(lastv, ast.Assign):
+            lastv.targets.append(ast.Name(id=',', ctx=ast.Store()))
+            elseb.append(lastv)
+        elif isinstance(lastv, ast.If):
+            elseb.append(lastv)
+        else:
+            elseb.extend(emit_set(EId(None, ','), lastv, scope))
     else:
-        elseb.extend(emit_set(EId(None, ','), lastv, scope))
+        elseb = [ast.Pass()]
 
     yield ast.fix_missing_locations(ast.If(cond, ifb, elseb))
 
@@ -428,8 +445,8 @@ def run(txt):
 
     wrapper = ast.Module(body=body)
 
-    print(astor.dump(wrapper))
-    print(astor.to_source(wrapper))
+    # print(astor.dump(wrapper))
+    # print(astor.to_source(wrapper))
 
     co = compile(wrapper, '<ast>', 'exec')
     exec(co, {})
@@ -437,14 +454,18 @@ def run(txt):
 
 run('''
 
-(n,s) [
-    n - 1 n.
-    n % 3 == 0 [ s + n s ] [
-        n % 5 == 0 [ s + n s ] [ s ]
-    ].
-    n < 1 [ s ] [ solve', n, s, tail ].
+(a,b,s) [
+    (a + b) n.
+
+    n <= 4_000_000 [
+        n % 2 == 0 [ (s + n) s ] [].
+        solve', b, n, s, tail.
+    ] [
+        s
+    ]
+
 ] solve.
 
-1000, 0, solve, print.
+0, 1, 0, solve, print.
 
 ''')
