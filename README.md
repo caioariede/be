@@ -62,5 +62,5 @@ Toy language :)
 
 ##### Examples
 
-    (n,) [ n print ] echo.
-    (a,b) [ a + b ] add.
+    (n,) [ n print ] echo
+    (a,b) [ a + b ] add
