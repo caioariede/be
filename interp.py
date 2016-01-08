@@ -131,7 +131,7 @@ def eat_next(rest, stack):
         expr = EInt(int, int(''.join(buf)))
         return expr, rest
 
-    elif c in ('+', '-', '*', '%'):
+    elif c in ('+', '-', '*', '%', '/'):
         expr, rest = eat_next(rest, stack)
         if expr:
             expr = EOp(c, [stack.pop(), expr])
@@ -299,6 +299,7 @@ def resolve_value(value, scope):
             '+': ast.Add(),
             '-': ast.Sub(),
             '*': ast.Mult(),
+            '/': ast.Div(),
             '%': ast.Mod(),
         }
 
@@ -454,18 +455,15 @@ def run(txt):
 
 run('''
 
-(a,b,s) [
-    (a + b) n.
+(n,) [
 
-    n <= 4_000_000 [
-        n % 2 == 0 [ (s + n) s ] [].
-        solve', b, n, s, tail.
-    ] [
-        s
-    ]
+    n * (n + 1) / 2, 2, pow SquareOfSum.
+    n * (n + 1) * ((2 * n) + 1) / 6 SumOfSquares.
+
+    SquareOfSum - SumOfSquares, int.
 
 ] solve.
 
-0, 1, 0, solve, print.
+100 solve, print.
 
 ''')
