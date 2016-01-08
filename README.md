@@ -6,11 +6,11 @@ Toy language :)
 
 ### Variables
 
-#### Format
+##### Format
 
     <expr> <id>
 
-#### Examples
+##### Examples
 
     1n.
     1 n.
@@ -19,11 +19,11 @@ Toy language :)
 
 ### Calling functions
 
-#### Format
+##### Format
 
     <expr> id
 
-#### Examples
+##### Examples
 
     1 print
     1, 1, add, print
@@ -31,11 +31,11 @@ Toy language :)
 
 ### Functions
 
-#### Format
+##### Format
 
     <list> <block> <id>
 
-#### Examples
+##### Examples
 
     (n,) [ n print ] echo.
     (a,b) [ a + b ] add.
