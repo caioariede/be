@@ -1,6 +1,31 @@
 # be
 Toy language :)
 
+## Data Types
+
+#### Int
+
+    1
+    1_000_000
+
+#### Float
+
+    1.0
+    1.0e+1
+    1_000.0
+
+#### String
+
+    "Hello world"
+
+#### List
+
+    [1,2,3]
+
+### Tuple
+
+    (1,2,3)
+    
 
 ## Mini Tutorial
 
@@ -12,9 +37,9 @@ Toy language :)
 
 ##### Examples
 
-    1n.
-    1 n.
-    (1 + 1) n.
+    1n
+    1 n
+    (1 + 1) n
 
 
 ### Calling functions
@@ -33,7 +58,7 @@ Toy language :)
 
 ##### Format
 
-    <list> <block> <id>
+    <tuple> <block> <id>
 
 ##### Examples
 
