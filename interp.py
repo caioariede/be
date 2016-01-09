@@ -101,6 +101,7 @@ def eat_next(rest, stack):
 
     elif c.isdigit():
         buf = [c]
+        typ = int
         while True:
             c = next(rest)
             if c.isdigit():
@@ -108,27 +109,47 @@ def eat_next(rest, stack):
             elif c == '_':
                 pass
             else:
+                if c != '.':
+                    rest = reject(rest, [c])
                 break
-        buf2 = [c]
-        if c == 'e':
-            l = c = next(rest)
-            if c == '+':
-                buf2.append(c)
+        if c == '.':
+            c = next(rest)
             if c.isdigit():
-                buf2.append(c)
-            elif l == '+':
-                rest = reject(rest, buf2)
-                buf2 = []
-            if buf2:
+                typ = float
+                buf.append('.')
+                buf.append(c)
                 while True:
                     c = next(rest)
-                    if not c.isdigit():
+                    if c.isdigit():
+                        buf.append(c)
+                    else:
+                        rest = reject(rest, [c])
                         break
-                    buf2.append(c)
+            else:
+                rest = reject(rest, [c])
+        c = next(rest)
+        buf2 = [c]
+        if c == 'e':
+            c = next(rest)
+            if c == '+':
+                buf2.append(c)
+                c = next(rest)
+            if c.isdigit():
+                typ = float
+                buf2.append(c)
                 buf.extend(buf2)
+                while True:
+                    c = next(rest)
+                    if c.isdigit():
+                        buf.append(c)
+                    else:
+                        rest = reject(rest, [c])
+                        break
+            else:
+                rest = reject(rest, buf2)
         else:
             rest = reject(rest, buf2)
-        expr = EInt(int, int(''.join(buf)))
+        expr = EInt(typ, typ(''.join(buf)))
         return expr, rest
 
     elif c in ('+', '-', '*', '%', '/'):
@@ -447,7 +468,7 @@ def run(txt):
     wrapper = ast.Module(body=body)
 
     # print(astor.dump(wrapper))
-    # print(astor.to_source(wrapper))
+    print(astor.to_source(wrapper))
 
     co = compile(wrapper, '<ast>', 'exec')
     exec(co, {})
@@ -455,15 +476,6 @@ def run(txt):
 
 run('''
 
-(n,) [
-
-    n * (n + 1) / 2, 2, pow SquareOfSum.
-    n * (n + 1) * ((2 * n) + 1) / 6 SumOfSquares.
-
-    SquareOfSum - SumOfSquares, int.
-
-] solve.
-
-100 solve, print.
+1_000.0e+1
 
 ''')
