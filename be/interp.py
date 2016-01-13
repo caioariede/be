@@ -3,6 +3,7 @@ import astor
 import operator
 import itertools
 import string
+import os.path
 
 from collections import namedtuple
 
@@ -451,8 +452,9 @@ def emit_if(cond, ifb, elseb, scope):
 
 
 def inject_tail(scope):
+    path = os.path.join(os.path.dirname(__file__), 'tail.py')
     scope['callables']['tail'] = None
-    return astor.parsefile('tail.py').body
+    return astor.parsefile(path).body
 
 
 def to_ast(txt):
