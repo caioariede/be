@@ -1,6 +1,8 @@
 # be
 Toy language :)
 
+You can see some examples in the [euler directory](https://github.com/caioariede/be/tree/master/euler).
+
 ## Data Types
 
 #### Int
