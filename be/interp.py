@@ -455,9 +455,9 @@ def inject_tail(scope):
     return astor.parsefile('tail.py').body
 
 
-def run(txt):
+def to_ast(txt):
     scope = {
-        'callables': __builtins__.__dict__,
+        'callables': __builtins__,
         'stack': [],
     }
 
@@ -465,27 +465,16 @@ def run(txt):
     body.extend(inject_tail(scope))
     body.extend(parse(txt, scope))
 
-    wrapper = ast.Module(body=body)
+    return ast.Module(body=body)
 
+
+def to_code(txt):
+    ast = to_ast(txt)
+    return compile(ast, '<ast>', 'exec')
+
+
+def run(txt):
     # print(astor.dump(wrapper))
-    print(astor.to_source(wrapper))
-
-    co = compile(wrapper, '<ast>', 'exec')
+    # print(astor.to_source(wrapper))
+    co = to_code(txt)
     exec(co, {})
-
-
-run('''
-
-(n,f,m) [
-    f > n [ m ] [
-        n % f == 0 [
-            solve', n / f, f, f, tail
-        ] [ 
-            solve', n, f + 1, m, tail
-        ]
-    ]
-] solve.
-
-600851475143, 2, 2, solve, print.
-
-''')
